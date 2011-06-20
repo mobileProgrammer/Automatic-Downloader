@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 ###############################################################################
 # Yagudaev.com                                                                #
 # Copyright (C) 2011                                                          #
@@ -25,7 +27,7 @@ Created on 2011-04-19
 Description: This script screen scrapes a page provided to it as an argument and then downloads
 all the audio files found on the page.
 
-Use: > downloader -u http://www.example.com/music
+Use: > downloader http://www.example.com/music
 '''
 import getopt
 import sys
@@ -34,11 +36,13 @@ import re
 import threading
 import datetime
 
+FILE_EXTENSIONS = [".wav", ".wma", ".mp3"]
 downloadListLock = threading.Lock()
 
 class WorkerThread (threading.Thread):
-    def __init__(self, downloadList):
+    def __init__(self, downloadList, destination):
         self._downloadList = downloadList
+        self._destination = destination
         threading.Thread.__init__ ( self )
     
     def run(self):
@@ -55,37 +59,43 @@ class WorkerThread (threading.Thread):
                 download['inProgress'] = True
                 downloadListLock.release()
                 
-                downloadConnection = urllib.urlopen(download['url'])
-                newFile = open(download['filename'], "wb")
-                newFile.write(downloadConnection.read())
-            
+                urllib.urlretrieve(download['url'], self._destination + download['filename']);
                 print "finished writing %s (thread: %s)" % (download['filename'], self.getName())
             else:
                 downloadListLock.release()
 
 def main():
     #Reading in options from the command line
-    optlist, args = getopt.getopt(sys.argv[1:], 'u:', ['url='])
+    optlist, args = getopt.getopt(sys.argv[2:], 't:d:', ['threads=', 'dst='])
     
     timeAtStart = datetime.datetime.now()
     
-    if(not optlist):
+    if (len(sys.argv) < 2 or sys.argv[1].startswith('-')):
         print """Wrong format!
+            downloader <url> [options]
             Options are:
-            -u (--url): the URL where to download the content from
+            -t (--threads): number of threads to use when downloading files
+            -d (--dst): destination where the donwloaded files will be saved to
             """
         exit()
-    else:
+    
+    url = sys.argv[1]
+    if url.endswith('/'):
+        url = url[:-1]
+        
+    print "`%s`" % url
+    
+    # defaults
+    numThreads = 5
+    destination = '' # current working directory
+            
+    if optlist:
         #Parsing options specified in command line
         for opt, val in optlist:
-            if opt == "-u" or opt == "--url":
-                url = val
-                if val.endswith('/'):
-                    url = val[:-1]
-                    
-                print "`%s`" % url
-    
-    numThreads = 5
+            if opt == "-t" or opt == "--threads":
+                numThreads = int(val)
+            elif opt == "-d" or opt == "--dst":
+                destination = val
     
     # start reading the URL
     connection = urllib.urlopen(url)
@@ -100,23 +110,24 @@ def main():
     for match in iterator:
     #    print match.groups()
         fileUrl = match.group(1)
-            
-        if fileUrl.endswith(".mp3") or fileUrl.endswith(".wav") or fileUrl.endswith(".wma"):
+        
+        if any(fileUrl.endswith(extension) for extension in FILE_EXTENSIONS):  
+            urlType = re.match('^https?://(.*)', fileUrl)
             # absolute URL
-            if fileUrl.startswith("http://"):
-                filename = fileUrl[7:] # TODO: clean this up more!
-                downloadUrl = fileUrl
+            if urlType:
+                filename = urlType.group(1)
+                downloadUrl = urlType.group(0)
             else: # relative url
                 filename = fileUrl
                 downloadUrl = url + '/' + fileUrl
             
-            downloadList.append({'filename' : filename, 'url' : downloadUrl, 'inProgress': False})
+            downloadList.append({'filename' : urllib.unquote(filename), 'url' : downloadUrl, 'inProgress': False})
     
     threads = []
     
     # create threads
     for i in range(0, numThreads):
-        threads.append(WorkerThread(downloadList))
+        threads.append(WorkerThread(downloadList, destination))
         threads[i].setName(i)
         threads[i].start()
     
@@ -125,12 +136,16 @@ def main():
         t.join()
         
     # print summary
+    fileCount = len(downloadList)
     totalTime = datetime.datetime.now() - timeAtStart
     print "-" * 50
     print "Statistics"
     print "-" * 50
-    print "Total Download Time: %s" % totalTime
-    print "Average per File Time: %s" % (totalTime / len(downloadList))
+    print "Total Running Time: %s" % totalTime
+    print "Files Found: %d" % fileCount
+    
+    if (fileCount > 0):
+        print "Average per File Time: %s" % (totalTime / fileCount)
                   
 if __name__ == "__main__":
     main()
