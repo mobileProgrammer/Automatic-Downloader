@@ -35,6 +35,7 @@ import urllib
 import re
 import threading
 import datetime
+import os
 
 FILE_EXTENSIONS = [".wav", ".wma", ".mp3"]
 downloadListLock = threading.Lock()
@@ -58,9 +59,19 @@ class WorkerThread (threading.Thread):
                 print "downloading file %s of %s (%s, thread: %s)" % (i, len(self._downloadList), download['filename'], self.getName())
                 download['inProgress'] = True
                 downloadListLock.release()
-                
-                urllib.urlretrieve(download['url'], self._destination + download['filename']);
-                print "finished writing %s (thread: %s)" % (download['filename'], self.getName())
+
+		dst = self._destination + download['filename']
+		if not os.path.isfile(dst): # check that file does not exist
+			try:
+		                urllib.urlretrieve(download['url'], dst)
+        		        print "finished writing %s (thread: %s)" % (download['filename'], self.getName())
+			except IOError:
+				if '/' in download['filename']:
+					dir = self._destination + download['filename'][:download['filename'].rfind('/')]
+					os.makedirs(dir)
+					urllib.urlretrieve(download['url'], dst)
+		else:
+			print "skipped file " + dst + " because it already exists"
             else:
                 downloadListLock.release()
 
@@ -95,13 +106,15 @@ def main():
             if opt == "-t" or opt == "--threads":
                 numThreads = int(val)
             elif opt == "-d" or opt == "--dst":
-                destination = val
+                destination = val if re.search('/$', val) != None else val + '/'
     
     # start reading the URL
     connection = urllib.urlopen(url)
     html = connection.read()
     
-    patternLinks = re.compile(r'<a\s.*?href\s*?=\s*?"(.*?)"', re.DOTALL)
+    print 'destination=' + destination
+    
+    patternLinks = re.compile(r'<a\s.*?href\s*?=\s*?"(.*?)"', re.DOTALL | re.IGNORECASE)
     iterator = patternLinks.finditer(html);
 
     downloadList = []
@@ -119,7 +132,7 @@ def main():
                 downloadUrl = urlType.group(0)
             else: # relative url
                 filename = fileUrl
-                downloadUrl = url + '/' + fileUrl
+                downloadUrl = url[:url.rfind('/')] + '/' + fileUrl
             
             downloadList.append({'filename' : urllib.unquote(filename), 'url' : downloadUrl, 'inProgress': False})
     
